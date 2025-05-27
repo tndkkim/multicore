@@ -5,19 +5,21 @@
 #include <math.h>
 #include <cuda_runtime.h>
 
-#define SPHERES 20
-#define rnd( x ) (x * rand() / RAND_MAX)
+#define SPHERES 20 //spheres number to rendering
+#define rnd( x ) (x * rand() / RAND_MAX) //macro for making random number
 #define INF 2e10f
-#define DIM 2048
+#define DIM 2048 //image size 2048*2048
 
 struct Sphere {
     float r, b, g;
     float radius;
     float x, y, z;
-
+    //check if ray and sphere hit each other
+    //it is a function that can be run at GPU device
     __device__ float hit(float ox, float oy, float *n) {
         float dx = ox - x;
         float dy = oy - y;
+        //if pixel value is in sphere
         if (dx*dx + dy*dy < radius*radius) {
             float dz = sqrtf(radius*radius - dx*dx - dy*dy);
             *n = dz / sqrtf(radius * radius);
@@ -28,7 +30,7 @@ struct Sphere {
 };
 
 __global__ void cuda_kernel(Sphere* s, unsigned char* ptr) {
-    // Calculate pixel coordinates from thread indices
+    //calculate current thread's 2D location
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
 
@@ -44,6 +46,7 @@ __global__ void cuda_kernel(Sphere* s, unsigned char* ptr) {
     for(int i = 0; i < SPHERES; i++) {
         float n;
         float t = s[i].hit(ox, oy, &n);
+        //if present sphere is more closer
         if (t > maxz) {
             float fscale = n;
             r = s[i].r * fscale;
@@ -52,13 +55,13 @@ __global__ void cuda_kernel(Sphere* s, unsigned char* ptr) {
             maxz = t;
         }
     }
-
+    //calculated color value -> 0~225 bitmap
     ptr[offset*4 + 0] = (int)(r * 255);
     ptr[offset*4 + 1] = (int)(g * 255);
     ptr[offset*4 + 2] = (int)(b * 255);
     ptr[offset*4 + 3] = 255;
 }
-
+//bitmap data -> ppm image file
 void ppm_write(unsigned char* bitmap, int xdim, int ydim, const char* filename) {
     FILE* fp = fopen(filename, "w");
     if (!fp) {
@@ -79,7 +82,7 @@ void ppm_write(unsigned char* bitmap, int xdim, int ydim, const char* filename) 
     }
     fclose(fp);
 }
-
+//Check if error occured after call CUDA API
 #define CUDA_CHECK(call) \
     do { \
         cudaError_t error = call; \
@@ -95,11 +98,6 @@ int main() {
     Sphere *h_spheres = (Sphere*)malloc(sizeof(Sphere) * SPHERES);
     unsigned char *h_bitmap = (unsigned char*)malloc(sizeof(unsigned char) * DIM * DIM * 4);
 
-    if (!h_spheres || !h_bitmap) {
-        printf("Error: Host memory allocation failed\n");
-        return -1;
-    }
-
     for (int i = 0; i < SPHERES; i++) {
         h_spheres[i].r = rnd(1.0f);
         h_spheres[i].g = rnd(1.0f);
@@ -109,20 +107,20 @@ int main() {
         h_spheres[i].z = rnd(2000.0f) - 1000;
         h_spheres[i].radius = rnd(200.0f) + 40;
     }
-
+    //GPU memory pointer
     Sphere *d_spheres;
     unsigned char *d_bitmap;
-
+    //allocate GPU memory
     CUDA_CHECK(cudaMalloc((void**)&d_spheres, sizeof(Sphere) * SPHERES));
     CUDA_CHECK(cudaMalloc((void**)&d_bitmap, sizeof(unsigned char) * DIM * DIM * 4));
-
+    //copy SPHERE data host -> device
     CUDA_CHECK(cudaMemcpy(d_spheres, h_spheres, sizeof(Sphere) * SPHERES, cudaMemcpyHostToDevice));
 
     dim3 blockSize(16, 16);  // 16x16 threads per block
     dim3 gridSize((DIM + blockSize.x - 1) / blockSize.x, (DIM + blockSize.y - 1) / blockSize.y);
-
+    //calculate execution time
     clock_t start_time = clock();
-
+    //run CUDA kernel 
     cuda_kernel<<<gridSize, blockSize>>>(d_spheres, d_bitmap);
     CUDA_CHECK(cudaGetLastError());
     CUDA_CHECK(cudaDeviceSynchronize());
